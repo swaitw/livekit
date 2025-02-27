@@ -40,7 +40,7 @@ import (
 
 const (
 	testApiKey        = "apikey"
-	testApiSecret     = "apiSecret"
+	testApiSecret     = "apiSecretExtendTo32BytesAsThatIsMinimum"
 	testRoom          = "mytestroom"
 	defaultServerPort = 7880
 	secondServerPort  = 8880
@@ -161,7 +161,7 @@ func createSingleNodeServer(configUpdater func(*config.Config)) *service.Livekit
 	if err != nil {
 		panic(fmt.Sprintf("could not create local node: %v", err))
 	}
-	currentNode.Id = guid.New(nodeID1)
+	currentNode.SetNodeID(livekit.NodeID(guid.New(nodeID1)))
 
 	s, err := service.InitializeServer(conf, currentNode)
 	if err != nil {
@@ -188,7 +188,7 @@ func createMultiNodeServer(nodeID string, port uint32) *service.LivekitServer {
 	if err != nil {
 		panic(err)
 	}
-	currentNode.Id = nodeID
+	currentNode.SetNodeID(livekit.NodeID(nodeID))
 
 	// redis routing and store
 	s, err := service.InitializeServer(conf, currentNode)
@@ -202,7 +202,11 @@ func createMultiNodeServer(nodeID string, port uint32) *service.LivekitServer {
 
 // creates a client and runs against server
 func createRTCClient(name string, port int, opts *testclient.Options) *testclient.RTCClient {
-	token := joinToken(testRoom, name)
+	var customizer func(token *auth.AccessToken, grants *auth.VideoGrant)
+	if opts != nil {
+		customizer = opts.TokenCustomizer
+	}
+	token := joinToken(testRoom, name, customizer)
 	ws, err := testclient.NewWebSocketConn(fmt.Sprintf("ws://localhost:%d", port), token, opts)
 	if err != nil {
 		panic(err)
@@ -241,12 +245,16 @@ func redisClient() *redis.Client {
 	})
 }
 
-func joinToken(room, name string) string {
+func joinToken(room, name string, customFn func(token *auth.AccessToken, grants *auth.VideoGrant)) string {
 	at := auth.NewAccessToken(testApiKey, testApiSecret).
-		AddGrant(&auth.VideoGrant{RoomJoin: true, Room: room}).
 		SetIdentity(name).
 		SetName(name).
 		SetMetadata("metadata" + name)
+	grant := &auth.VideoGrant{RoomJoin: true, Room: room}
+	if customFn != nil {
+		customFn(at, grant)
+	}
+	at.AddGrant(grant)
 	t, err := at.ToJWT()
 	if err != nil {
 		panic(err)

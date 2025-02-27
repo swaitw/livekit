@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/bep/debounce"
-	"github.com/pion/webrtc/v3"
+	"github.com/pion/webrtc/v4"
 	"go.uber.org/atomic"
 	"google.golang.org/protobuf/proto"
 
@@ -139,9 +139,9 @@ func (t *SubscribedTrack) Bound(err error) {
 }
 
 // for DownTrack callback to notify us that it's closed
-func (t *SubscribedTrack) Close(willBeResumed bool) {
+func (t *SubscribedTrack) Close(isExpectedToResume bool) {
 	if onClose := t.onClose.Load(); onClose != nil {
-		go onClose.(func(bool))(willBeResumed)
+		go onClose.(func(bool))(isExpectedToResume)
 	}
 }
 
@@ -220,7 +220,7 @@ func (t *SubscribedTrack) UpdateSubscriberSettings(settings *livekit.UpdateTrack
 	}
 
 	isImmediate = isImmediate || (!settings.Disabled && settings.Disabled != t.isMutedLocked())
-	t.settings = proto.Clone(settings).(*livekit.UpdateTrackSettings)
+	t.settings = utils.CloneProto(settings)
 	t.settingsLock.Unlock()
 
 	if isImmediate {
@@ -259,7 +259,7 @@ func (t *SubscribedTrack) applySettings() {
 
 		spatial = buffer.VideoQualityToSpatialLayer(quality, mt.ToProto())
 		if t.settings.Fps > 0 {
-			temporal = mt.GetTemporalLayerForSpatialFps(spatial, t.settings.Fps, dt.Codec().MimeType)
+			temporal = mt.GetTemporalLayerForSpatialFps(spatial, t.settings.Fps, dt.Mime())
 		}
 	}
 

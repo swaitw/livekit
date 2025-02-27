@@ -15,8 +15,7 @@
 package sfu
 
 import (
-	"fmt"
-
+	"github.com/livekit/protocol/livekit"
 	"github.com/livekit/protocol/logger"
 
 	"github.com/livekit/livekit-server/pkg/sfu/buffer"
@@ -50,32 +49,11 @@ type SnTs struct {
 
 // ----------------------------------------------------------------------
 
-type RTPMungerState struct {
-	ExtLastSN        uint64
-	ExtSecondLastSN  uint64
-	ExtLastTS        uint64
-	ExtSecondLastTS  uint64
-	LastMarker       bool
-	SecondLastMarker bool
-}
-
-func (r RTPMungerState) String() string {
-	return fmt.Sprintf(
-		"RTPMungerState{extLastSN: %d, extSecondLastSN: %d, extLastTS: %d, extSecondLastTS: %d, lastMarker: %v, secondLastMarker: %v)",
-		r.ExtLastSN, r.ExtSecondLastSN,
-		r.ExtLastTS, r.ExtSecondLastTS,
-		r.LastMarker, r.SecondLastMarker,
-	)
-}
-
-// ----------------------------------------------------------------------
-
 type RTPMunger struct {
 	logger logger.Logger
 
 	extHighestIncomingSN uint64
 	snRangeMap           *utils.RangeMap[uint64, uint64]
-	extHighestIncomingTS uint64 // TODO-REMOVE-AFTER-DATA-COLLECTION
 
 	extLastSN       uint64
 	extSecondLastSN uint64
@@ -113,14 +91,14 @@ func (r *RTPMunger) DebugInfo() map[string]interface{} {
 	}
 }
 
-func (r *RTPMunger) GetLast() RTPMungerState {
-	return RTPMungerState{
-		ExtLastSN:        r.extLastSN,
-		ExtSecondLastSN:  r.extSecondLastSN,
-		ExtLastTS:        r.extLastTS,
-		ExtSecondLastTS:  r.extSecondLastTS,
-		LastMarker:       r.lastMarker,
-		SecondLastMarker: r.secondLastMarker,
+func (r *RTPMunger) GetState() *livekit.RTPMungerState {
+	return &livekit.RTPMungerState{
+		ExtLastSequenceNumber:       r.extLastSN,
+		ExtSecondLastSequenceNumber: r.extSecondLastSN,
+		ExtLastTimestamp:            r.extLastTS,
+		ExtSecondLastTimestamp:      r.extSecondLastTS,
+		LastMarker:                  r.lastMarker,
+		SecondLastMarker:            r.secondLastMarker,
 	}
 }
 
@@ -128,18 +106,17 @@ func (r *RTPMunger) GetTSOffset() uint64 {
 	return r.tsOffset
 }
 
-func (r *RTPMunger) SeedLast(state RTPMungerState) {
-	r.extLastSN = state.ExtLastSN
-	r.extSecondLastSN = state.ExtSecondLastSN
-	r.extLastTS = state.ExtLastTS
-	r.extSecondLastTS = state.ExtSecondLastTS
+func (r *RTPMunger) SeedState(state *livekit.RTPMungerState) {
+	r.extLastSN = state.ExtLastSequenceNumber
+	r.extSecondLastSN = state.ExtSecondLastSequenceNumber
+	r.extLastTS = state.ExtLastTimestamp
+	r.extSecondLastTS = state.ExtSecondLastTimestamp
 	r.lastMarker = state.LastMarker
 	r.secondLastMarker = state.SecondLastMarker
 }
 
 func (r *RTPMunger) SetLastSnTs(extPkt *buffer.ExtPacket) {
 	r.extHighestIncomingSN = extPkt.ExtSequenceNumber - 1
-	r.extHighestIncomingTS = extPkt.ExtTimestamp - 1
 
 	r.extLastSN = extPkt.ExtSequenceNumber
 	r.extSecondLastSN = r.extLastSN - 1
@@ -153,7 +130,6 @@ func (r *RTPMunger) SetLastSnTs(extPkt *buffer.ExtPacket) {
 
 func (r *RTPMunger) UpdateSnTsOffsets(extPkt *buffer.ExtPacket, snAdjust uint64, tsAdjust uint64) {
 	r.extHighestIncomingSN = extPkt.ExtSequenceNumber - 1
-	r.extHighestIncomingTS = extPkt.ExtTimestamp - 1
 
 	r.snRangeMap.ClearAndResetValue(extPkt.ExtSequenceNumber, extPkt.ExtSequenceNumber-r.extLastSN-snAdjust)
 	r.updateSnOffset()
@@ -193,18 +169,6 @@ func (r *RTPMunger) UpdateAndGetSnTs(extPkt *buffer.ExtPacket, marker bool) (Tra
 	if (diff == 1 && len(extPkt.Packet.Payload) != 0) || diff > 1 {
 		// in-order - either contiguous packet with payload OR packet following a gap, may or may not have payload
 		r.extHighestIncomingSN = extPkt.ExtSequenceNumber
-
-		// TODO-REMOVE-AFTER-DATA-COLLECTION
-		tsDiff := int64(extPkt.ExtTimestamp - r.extHighestIncomingTS)
-		if tsDiff > 24000 { // 1/2 second at audio clock rate
-			r.logger.Infow(
-				"big jump in incoming timestamp",
-				"last", r.extHighestIncomingTS,
-				"current", extPkt.ExtTimestamp,
-				"diff", tsDiff,
-			)
-		}
-		r.extHighestIncomingTS = extPkt.ExtTimestamp
 
 		ordering := SequenceNumberOrderingContiguous
 		if diff > 1 {
